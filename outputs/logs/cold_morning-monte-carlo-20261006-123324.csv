@@ -1,0 +1,4 @@
+metric,mean,std
+final_temperature,20.98684935023761,0.0724970251520227
+minimum_temperature,18.0,0.0
+heater_duty_cycle,0.27092592592592596,0.0009166199015381034

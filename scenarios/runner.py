@@ -1,6 +1,7 @@
 import os
 import time
 from typing import Dict, List, Optional
+import numpy as np
 
 from utils.config import load_config
 from utils.rng import RNG
@@ -12,9 +13,9 @@ from simulations.room_model import step_room
 from simulations.environment import Environment
 from plotting.plots import plot_timeseries, plot_error, plot_duty, plot_predictive, plot_heater
 
-def run_scenario(scenario_path: str):
+def simulate_once(scenario_path: str, seed: Optional[int] = None):
     scenario = load_config(scenario_path)
-    rng = RNG(scenario.sim.seed)
+    rng = RNG(scenario.sim.seed if seed is None else seed)
 
     env = Environment(
         base=scenario.env.base,
@@ -96,6 +97,12 @@ def run_scenario(scenario_path: str):
         T = step_room(T, heater, T_out, scenario.model.R, scenario.model.C, scenario.model.P,
                       dt, scenario.model.process_sigma, rng)
 
+    return log, use_predictive
+
+
+def run_scenario(scenario_path: str):
+    log, use_predictive = simulate_once(scenario_path)
+
     # Write CSV
     ts = time.strftime("%Y%m%d-%H%M%S")
     base = os.path.splitext(os.path.basename(scenario_path))[0]
@@ -121,3 +128,46 @@ def run_scenario(scenario_path: str):
 
     print(f"Wrote log to {csv_path}")
     print(f"Figures saved to {fig_dir}")
+
+
+def run_monte_carlo(scenario_path: str, runs: int = 100, start_seed: int = 0):
+    if runs < 1:
+        raise ValueError("runs must be at least 1")
+
+    final_temperatures = []
+    minimum_temperatures = []
+    heater_duty_cycles = []
+
+    for seed in range(start_seed, start_seed + runs):
+        log, _ = simulate_once(scenario_path, seed=seed)
+        temperatures = np.asarray(log["T_true"])
+        heater = np.asarray(log["heater"])
+        final_temperatures.append(temperatures[-1])
+        minimum_temperatures.append(temperatures.min())
+        heater_duty_cycles.append(heater.mean())
+
+    metrics = {
+        "final_temperature": final_temperatures,
+        "minimum_temperature": minimum_temperatures,
+        "heater_duty_cycle": heater_duty_cycles,
+    }
+    summary = {}
+    for name, values in metrics.items():
+        summary[f"{name}_mean"] = float(np.mean(values))
+        summary[f"{name}_std"] = float(np.std(values))
+
+    ts = time.strftime("%Y%m%d-%H%M%S")
+    base = os.path.splitext(os.path.basename(scenario_path))[0]
+    log_dir = os.path.join("outputs", "logs")
+    os.makedirs(log_dir, exist_ok=True)
+    csv_path = os.path.join(log_dir, f"{base}-monte-carlo-{ts}.csv")
+    with open(csv_path, "w") as f:
+        f.write("metric,mean,std\n")
+        for name, values in metrics.items():
+            f.write(f"{name},{np.mean(values)},{np.std(values)}\n")
+
+    print(f"Monte Carlo runs: {runs}")
+    for name in metrics:
+        print(f"{name}: mean={summary[f'{name}_mean']:.4f}, std={summary[f'{name}_std']:.4f}")
+    print(f"Summary saved to {csv_path}")
+    return summary
